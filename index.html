@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AMAGI TENNIS</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #101418;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas {
+      width: 768px;
+      height: 720px;
+      background: #000;
+    }
+    @media (max-width: 800px), (max-height: 740px) {
+      canvas { width: calc(min(100vw, 100vh * 256 / 240)); height: auto; aspect-ratio: 256 / 240; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="768" height="720"></canvas>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

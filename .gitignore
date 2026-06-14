@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.local
+*.log
+
+# IDE
+.idea/
+
+# 影片參考素材（含任天堂版權畫面與中間產物，僅留本機）
+reference/
+
+# 未使用的原始 / 舊版 sprite 素材（保留在本機作備份，不納入倉庫以免膨脹）
+src/assets/players/*-source.png
+src/assets/players/player-*.png
