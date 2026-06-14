@@ -96,3 +96,80 @@ describe('Score — 終局', () => {
     expect(s.games).toEqual(before);
   });
 });
+
+function winGames(s: Score, side: Side, n: number) {
+  let last;
+  for (let g = 0; g < n; g++) last = winPoints(s, side, 4);
+  return last!;
+}
+
+describe('Score — 一般模式（盤 / 搶七 / 三盤兩勝）', () => {
+  it('一盤 6 局（差 2）拿下一盤，未達兩盤不結束', () => {
+    const s = new Score('near', { mode: 'normal' });
+    const ev = winGames(s, 'near', 6);
+    expect(ev.setWon).toBe('near');
+    expect(ev.matchWon).toBeUndefined();
+    expect(s.sets).toEqual({ near: 1, far: 0 });
+    expect(s.games).toEqual({ near: 0, far: 0 }); // 新盤歸零
+    expect(s.setHistory).toEqual([{ near: 6, far: 0 }]); // 逐盤局數紀錄
+  });
+
+  it('6-6 進入搶七，搶七到 7（差 2）拿盤', () => {
+    const s = new Score('near', { mode: 'normal' });
+    winGames(s, 'near', 5);
+    winGames(s, 'far', 5);          // 5-5
+    winGames(s, 'near', 1);
+    winGames(s, 'far', 1);          // 6-6
+    expect(s.inTiebreak).toBe(true);
+    winPoints(s, 'near', 6);
+    winPoints(s, 'far', 4);         // 6-4 搶七
+    const ev = winPoints(s, 'near', 1); // 7-4 拿盤
+    expect(ev.setWon).toBe('near');
+    expect(s.sets.near).toBe(1);
+    expect(s.inTiebreak).toBe(false);
+  });
+
+  it('搶七必須差 2 分才結束（7-6 不算，續打到差 2）', () => {
+    const s = new Score('near', { mode: 'normal' });
+    winGames(s, 'near', 5);
+    winGames(s, 'far', 5);
+    winGames(s, 'near', 1);
+    winGames(s, 'far', 1);            // 6-6 進搶七
+    winPoints(s, 'near', 6);
+    winPoints(s, 'far', 6);           // 搶七 6-6
+    let ev = winPoints(s, 'near', 1); // 7-6
+    expect(s.inTiebreak).toBe(true);  // 差 1 不結束
+    expect(ev.setWon).toBeUndefined();
+    ev = winPoints(s, 'far', 1);      // 7-7
+    expect(s.inTiebreak).toBe(true);
+    winPoints(s, 'near', 1);          // 8-7
+    expect(s.inTiebreak).toBe(true);
+    ev = winPoints(s, 'near', 1);     // 9-7 → 差 2 拿盤
+    expect(ev.setWon).toBe('near');
+    expect(s.sets.near).toBe(1);
+    expect(s.inTiebreak).toBe(false);
+  });
+
+  it('搶七輸的一方該盤記為 6（局數 7-6 / 6-7）前的狀態正確', () => {
+    const s = new Score('near', { mode: 'normal' });
+    winGames(s, 'near', 5);
+    winGames(s, 'far', 5);
+    winGames(s, 'near', 1);
+    winGames(s, 'far', 1);            // 6-6
+    expect(s.games).toEqual({ near: 6, far: 6 });
+    expect(s.inTiebreak).toBe(true);
+  });
+
+  it('三盤兩勝：先拿兩盤者勝', () => {
+    const s = new Score('near', { mode: 'normal' });
+    winGames(s, 'near', 6);          // 第一盤 near
+    winGames(s, 'far', 6);           // 第二盤 far（換發後仍可連贏局）
+    expect(s.sets).toEqual({ near: 1, far: 1 });
+    expect(s.finished).toBe(false);
+    const ev = winGames(s, 'near', 6); // 第三盤 near → 比賽結束
+    expect(ev.setWon).toBe('near');
+    expect(ev.matchWon).toBe('near');
+    expect(s.finished).toBe(true);
+    expect(s.sets).toEqual({ near: 2, far: 1 });
+  });
+});
