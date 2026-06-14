@@ -50,4 +50,17 @@ describe('Player animation actions', () => {
     player.update({ ...emptyIntent(), moveX: 1 }, 1 / 60);
     expect(player.facingX).toBe(1);
   });
+
+  it('allows serve positioning before the toss and locks movement after it starts', () => {
+    const player = new Player('near', 80);
+    const startX = player.pos.x;
+
+    player.update({ ...emptyIntent(), moveX: 1 }, 0.1);
+    expect(player.pos.x).toBeGreaterThan(startX);
+
+    player.startToss();
+    const tossX = player.pos.x;
+    player.update({ ...emptyIntent(), moveX: -1 }, 0.1);
+    expect(player.pos.x).toBe(tossX);
+  });
 });

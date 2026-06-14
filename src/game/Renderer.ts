@@ -6,6 +6,7 @@ import {
   S_FAR, S_NEAR, SERVICE_LINE_OFF, Y_FAR, Y_NEAR, Z_FACTOR,
 } from '../constants';
 import type { Player } from '../entities/Player';
+import { BIND_ACTIONS, keyLabel, t } from '../settings';
 import { lerp } from '../utils';
 import type { Game } from './Game';
 import nearLocomotionUrl from '../assets/players/near-locomotion.png';
@@ -13,6 +14,7 @@ import nearGroundstrokesUrl from '../assets/players/near-groundstrokes.png';
 import nearOverheadUrl from '../assets/players/near-overhead.png';
 import farCoreUrl from '../assets/players/far-core.png';
 import farExtraUrl from '../assets/players/far-extra.png';
+import umpireUrl from '../assets/umpire.png';
 
 interface Projected {
   sx: number;
@@ -38,6 +40,7 @@ const LINE_CALLS = new Set(['OUT!', 'NET!', 'FAULT!', 'NET! FAULT!', 'DOUBLE FAU
 
 export class Renderer {
   private sprites: Record<SpriteSheet, SpriteAsset>;
+  private umpire: SpriteAsset;
 
   constructor(private ctx: CanvasRenderingContext2D) {
     this.ctx.imageSmoothingEnabled = true;
@@ -49,6 +52,7 @@ export class Renderer {
       farCore: this.loadSprite(farCoreUrl),
       farExtra: this.loadSprite(farExtraUrl),
     };
+    this.umpire = this.loadSprite(umpireUrl);
   }
 
   private loadSprite(url: string): SpriteAsset {
@@ -79,6 +83,8 @@ export class Renderer {
       this.drawTitle(game);
       return;
     }
+    // 逐盤板畫在球員之前（背景層）→ 即使重疊也是球員蓋過它，不會擋到球員
+    if (game.score.mode === 'normal') this.drawSetBoard(game);
     this.drawScene(game, true);
     this.drawScoreboard(game);
     if (game.motionLab) this.drawMotionLab(game);
@@ -95,7 +101,7 @@ export class Renderer {
     }
     if (game.phase === 'pause') {
       this.overlay(0.5);
-      this.drawBanner('PAUSE');
+      this.drawBanner(t(game.settings.lang, 'pause'));
     }
     if (game.phase === 'gameOver') this.drawGameOver(game);
   }
@@ -128,7 +134,7 @@ export class Renderer {
   // ── 場景 ─────────────────────────────────────────
   private drawScene(game: Game, withBall: boolean): void {
     this.drawCourt();
-    this.drawChair();
+    this.drawChair(game);
     this.drawPlayer(game, game.players.far);
     const showBall = withBall && !(game.phase === 'serve' && game.serveState === 'ready');
     const ballFar = game.ball.pos.y < NET_Y;
@@ -220,14 +226,36 @@ export class Renderer {
     return this.project(COURT_W + ALLEY_W + 12, NET_Y);
   }
 
-  /** 裁判椅（網柱右側高台，比照 FC Tennis） */
-  private drawChair(): void {
-    const c = this.ctx;
+  /** 裁判椅（網柱右側高台）：用真人 sprite，頭依球的位置朝向 */
+  private drawChair(game: Game): void {
     const base = this.chairBase();
     const x = base.sx;
     const y = base.sy;
+
+    if (this.umpire.loaded) {
+      // 頭部朝向：近端→面向鏡頭(0)、中段→側面(1)、遠端→背向(2)
+      const b = game.ball;
+      let frame = 1;
+      if (b.active) {
+        // 對打中追球的深度
+        if (b.pos.y > NET_Y + 26) frame = 0;
+        else if (b.pos.y < NET_Y - 26) frame = 2;
+      } else if (game.phase === 'serve') {
+        // 發球（球未擊出）時看向發球方
+        frame = game.score.server === 'near' ? 0 : 2;
+      }
+      const img = this.umpire.image;
+      const fw = img.naturalWidth / 3;
+      const fh = img.naturalHeight;
+      const h = 38;                  // 裁判席螢幕高度（網前景深，略小於近端球員）
+      const w = h * (fw / fh);
+      this.ctx.drawImage(img, frame * fw, 0, fw, fh, x - w / 2, y - h, w, h);
+      return;
+    }
+
+    // 後備：未載入時畫簡單向量椅
+    const c = this.ctx;
     const h = 40;
-    // 四隻外八椅腳 + 兩道橫撐
     c.strokeStyle = COLORS.chairWood;
     c.lineWidth = 1.4;
     c.lineCap = 'round';
@@ -237,17 +265,15 @@ export class Renderer {
     c.moveTo(x - 5.2, y - 6); c.lineTo(x + 5.2, y - 6);
     c.moveTo(x - 4.4, y - 16); c.lineTo(x + 4.4, y - 16);
     c.stroke();
-    // 座台 + 椅背
     c.fillStyle = COLORS.chairSeat;
     this.rrect(x - 6, y - h + 11, 12, 4, 1.5); c.fill();
     this.rrect(x - 6, y - h - 1, 2.5, 13, 1.2); c.fill();
-    // 裁判（白衣、戴帽，比照原型）
     c.fillStyle = '#f4f4f4';
-    this.rrect(x - 3, y - h + 2, 6, 7, 2); c.fill();   // 身體
+    this.rrect(x - 3, y - h + 2, 6, 7, 2); c.fill();
     c.fillStyle = COLORS.skin;
-    c.beginPath(); c.arc(x, y - h - 1, 2.4, 0, Math.PI * 2); c.fill(); // 頭
+    c.beginPath(); c.arc(x, y - h - 1, 2.4, 0, Math.PI * 2); c.fill();
     c.fillStyle = '#d82800';
-    c.fillRect(x - 2.6, y - h - 2.6, 5.2, 1.6);        // 帽簷
+    c.fillRect(x - 2.6, y - h - 2.6, 5.2, 1.6);
   }
 
   // ── 球員（向量角色）─────────────────────────────
@@ -262,19 +288,25 @@ export class Renderer {
     const proj = this.project(pl.pos.x, pl.pos.y);
     const far = pl.side === 'far';
     const pose = this.pickPose(pl);
+    const serveReady = game.phase === 'serve'
+      && game.serveState === 'ready'
+      && game.score.server === pl.side;
     // 近端正反手有各自的完整動畫列；待機與移動才依方向鏡像。
     let mirror = false;
-    if (pose === 'swing' && far) mirror = pl.action === 'backhand';
+    if (serveReady) mirror = false;
+    else if (pose === 'swing' && far) mirror = pl.action === 'backhand';
     else if (pose === 'idle' || pose === 'run') mirror = pl.facingX < 0;
     const shirt = far ? COLORS.aiBody : COLORS.playerBody;
     // 固定尺寸（不隨位置變大小）
-    if (!this.drawSpritePlayer(proj.sx, proj.sy, far, mirror, pl)) {
+    if (!this.drawSpritePlayer(proj.sx, proj.sy, far, mirror, pl, serveReady)) {
       const u = far ? 0.7 : 1.0;
       this.drawChar(proj.sx, proj.sy, u, shirt, far, pose, mirror, pl, game.contactPoint);
     }
   }
 
-  private spriteFrame(pl: Player): { sheet: SpriteSheet; row: number; frame: number } {
+  private spriteFrame(
+    pl: Player, serveReady = false,
+  ): { sheet: SpriteSheet; row: number; frame: number } {
     if (pl.side === 'far') {
       if (pl.action === 'toss') {
         return { sheet: 'farExtra', row: 1, frame: 0 };
@@ -292,9 +324,17 @@ export class Renderer {
         frame: pl.moving ? Math.floor(pl.walkPhase * 10) % 4 : 0,
       };
     }
+    if (serveReady) {
+      // 持球準備：第一格內含手上的球，可沿底線左右調整站位。
+      return { sheet: 'nearOverhead', row: 0, frame: 0 };
+    }
     if (pl.action === 'toss') {
-      // 拋球後維持靜止準備姿勢（球已拋出、舉拍待擊），不播動畫
-      return { sheet: 'nearOverhead', row: 0, frame: 2 };
+      // 持球格之後依序播放拋球、獎盃姿勢與球拍下沉蓄力（第 2～4 格）。
+      return {
+        sheet: 'nearOverhead',
+        row: 0,
+        frame: 1 + Math.min(2, Math.floor(pl.actionProgress * 3)),
+      };
     }
     if (pl.action === 'serve' || pl.action === 'smash') {
       return { sheet: 'nearOverhead', row: 1, frame: Math.min(3, Math.floor(pl.actionProgress * 4)) };
@@ -313,9 +353,9 @@ export class Renderer {
   }
 
   private drawSpritePlayer(
-    sx: number, sy: number, far: boolean, mirror: boolean, pl: Player,
+    sx: number, sy: number, far: boolean, mirror: boolean, pl: Player, serveReady = false,
   ): boolean {
-    const selection = this.spriteFrame(pl);
+    const selection = this.spriteFrame(pl, serveReady);
     const asset = this.sprites[selection.sheet];
     if (!asset.loaded) return false;
     const source: CanvasImageSource = asset.image;
@@ -589,7 +629,7 @@ export class Renderer {
     const c = this.ctx;
     const base = this.chairBase();
     const headX = base.sx;
-    const headTop = base.sy - 40 - 6; // 裁判頭頂之上
+    const headTop = base.sy - 38 - 6; // 裁判頭頂之上（對齊 sprite 高度）
     c.font = '700 9px Verdana, sans-serif';
     const w = c.measureText(text).width + 10;
     const h = 13;
@@ -664,6 +704,8 @@ export class Renderer {
     const { sx, sy, scale } = this.project(b.pos.x, b.pos.y);
     const c = this.ctx;
     // 快球殘影
+    // 球半徑：較小的基準（貼地時小）× 高度（拋球/高吊到高處才變大）× 景深
+    const ballR = (y: number, z: number) => (y < NET_Y ? 1.2 : 1.5) * (1 + Math.max(0, z) * 0.022);
     if (b.fast && b.active) {
       [0, 2].forEach((i, n) => {
         const t = b.trail[i];
@@ -672,17 +714,18 @@ export class Renderer {
         const ty = p.sy - t.z * p.scale * Z_FACTOR;
         c.fillStyle = n === 0 ? 'rgba(255,216,0,0.2)' : 'rgba(255,216,0,0.4)';
         c.beginPath();
-        c.arc(p.sx, ty, 1.6, 0, Math.PI * 2);
+        c.arc(p.sx, ty, ballR(t.y, t.z) * 0.8, 0, Math.PI * 2);
         c.fill();
       });
     }
-    // 陰影固定在地面投影點
-    c.fillStyle = COLORS.shadow;
+    // 陰影固定在地面投影點；球越高陰影越小越淡
+    const shFade = 1 / (1 + b.z * 0.022);
+    c.fillStyle = `rgba(0,0,0,${0.4 * shFade})`;
     c.beginPath();
-    c.ellipse(sx, sy, 2.6, 1.2, 0, 0, Math.PI * 2);
+    c.ellipse(sx, sy, 2.0 * shFade, 0.95 * shFade, 0, 0, Math.PI * 2);
     c.fill();
     const by = sy - b.z * scale * Z_FACTOR;
-    const r = b.pos.y < NET_Y ? 1.9 : 2.4;
+    const r = ballR(b.pos.y, b.z);
     c.fillStyle = COLORS.ball;
     c.beginPath();
     c.arc(sx, by, r, 0, Math.PI * 2);
@@ -717,22 +760,23 @@ export class Renderer {
     c.fillText(str, x, y);
   }
 
-  /** 左上角比分黑框（比照 FC Tennis 的 Com/You） */
+  /** 左上角比分黑框：當前這一分（含搶七）。一般模式逐盤局數另由 drawSetBoard 顯示 */
   private drawScoreboard(game: Game): void {
     const c = this.ctx;
     const s = game.score;
+    const normal = s.mode === 'normal';
     const pn = ['0', '15', '30', '40'];
-    const pt = (mine: number, theirs: number): string => {
-      if (mine >= 3 && theirs >= 3) {
-        if (mine === theirs) return '40';
-        return mine > theirs ? 'Ad' : '40';
-      }
+    const ptStr = (mine: number, theirs: number): string => {
+      if (s.inTiebreak) return `${mine}`;
+      if (mine >= 3 && theirs >= 3) return mine === theirs ? '40' : mine > theirs ? 'Ad' : '40';
       return pn[Math.min(mine, 3)];
     };
     const x = 6;
-    const y = 5;        // 完全置於上方觀眾席藍牆帶內（不跨界 apron、不遮場地）
-    const w = 66;
+    const y = 5;
+    const w = normal ? 52 : 66; // 一般模式只顯示 PT，較窄
     const h = 30;
+    const gmX = x + 40;
+    const ptX = x + w - 5;
     c.fillStyle = COLORS.uiBg;
     this.rrect(x, y, w, h, 3);
     c.fill();
@@ -744,32 +788,73 @@ export class Renderer {
       c.fillStyle = swatch;
       this.rrect(x + 5, ry - 4, 6, 6, 1.5);
       c.fill();
-      this.text(label, x + 15, ry - 1, COLORS.uiText, '700 7.5px Verdana, sans-serif', 'left');
-      this.text(`${games}`, x + 40, ry - 1, COLORS.uiDim, '600 7px Verdana, sans-serif', 'center');
-      this.text(point, x + w - 6, ry - 1, COLORS.title, '700 8.5px Verdana, sans-serif', 'right');
+      this.text(label, x + 14, ry - 1, COLORS.uiText, '700 7px Verdana, sans-serif', 'left');
+      if (!normal) this.text(`${games}`, gmX, ry - 1, COLORS.uiDim, '600 7px Verdana, sans-serif', 'center');
+      this.text(point, ptX, ry - 1, COLORS.title, '700 8.5px Verdana, sans-serif', 'right');
       if (serving) {
         c.fillStyle = COLORS.title;
         c.beginPath();
-        c.arc(x + 13, ry - 7.5, 1.2, 0, Math.PI * 2);
+        c.arc(x + 12, ry - 7.5, 1.2, 0, Math.PI * 2);
         c.fill();
       }
     };
-    // 欄位標題
-    this.text('GM', x + 40, y + 6, COLORS.uiDim, '600 5.5px Verdana, sans-serif', 'center');
-    this.text('PT', x + w - 6, y + 6, COLORS.uiDim, '600 5.5px Verdana, sans-serif', 'right');
-    row('CPU', COLORS.aiBody, s.games.far, pt(s.points.far, s.points.near), s.server === 'far', y + 16);
-    row('P1', COLORS.playerBody, s.games.near, pt(s.points.near, s.points.far), s.server === 'near', y + 26);
+    const hd = '600 5.5px Verdana, sans-serif';
+    if (!normal) this.text('GM', gmX, y + 6, COLORS.uiDim, hd, 'center');
+    this.text(s.inTiebreak ? 'TB' : 'PT', ptX, y + 6, COLORS.uiDim, hd, 'right');
+    row('CPU', COLORS.aiBody, s.games.far, ptStr(s.points.far, s.points.near), s.server === 'far', y + 16);
+    row('P1', COLORS.playerBody, s.games.near, ptStr(s.points.near, s.points.far), s.server === 'near', y + 26);
+  }
+
+  /** AMAGI 橫幅下方的逐盤計分板（轉播式）：CPU/P1 × 各盤局數，精簡兩列、置中對齊 */
+  private drawSetBoard(game: Game): void {
+    const c = this.ctx;
+    const s = game.score;
+    const cols = s.setHistory.slice();
+    if (!s.finished) cols.push({ near: s.games.near, far: s.games.far });
+    if (cols.length === 0) cols.push({ near: 0, far: 0 });
+    const n = cols.length;
+    const currentIdx = s.finished ? -1 : n - 1;
+
+    const boardW = 80;
+    const bx = CX - boardW / 2;    // 置中、對齊上方 AMAGI 橫幅（已畫在球員後方，不會擋人）
+    const by = 16;
+    const boardH = 22;
+    const cpuY = by + 7;
+    const p1Y = by + 15;
+    const labelArea = 30;          // 左側 CPU/P1 標籤區
+    const cellsX0 = bx + labelArea;
+    const cellsW = boardW - labelArea - 4;
+
+    c.fillStyle = 'rgba(0,0,0,0.85)';
+    this.rrect(bx, by, boardW, boardH, 3);
+    c.fill();
+    c.strokeStyle = COLORS.line;
+    c.lineWidth = 0.6;
+    c.stroke();
+
+    const cellCx = (i: number) => cellsX0 + (i + 0.5) * (cellsW / n);
+    const drawRow = (label: string, swatch: string, vals: number[], ry: number) => {
+      c.fillStyle = swatch;
+      this.rrect(bx + 5, ry - 3, 5, 5, 1.5);
+      c.fill();
+      this.text(label, bx + 12, ry, COLORS.uiText, '700 6.5px Verdana, sans-serif', 'left');
+      vals.forEach((v, i) => {
+        this.text(`${v}`, cellCx(i), ry, i === currentIdx ? COLORS.title : COLORS.uiText,
+          '700 8px Verdana, sans-serif', 'center');
+      });
+    };
+    drawRow('CPU', COLORS.aiBody, cols.map((cc) => cc.far), cpuY);
+    drawRow('P1', COLORS.playerBody, cols.map((cc) => cc.near), p1Y);
   }
 
   private drawServeHint(game: Game): void {
-    const second = game.faults > 0 ? '2ND SERVE - ' : '';
+    const lang = game.settings.lang;
+    const second = game.faults > 0 ? t(lang, 'secondServe') : '';
     let msg: string;
     if (game.score.server === 'near') {
-      msg = game.serveState === 'ready'
-        ? `${second}SPACE: TOSS BALL`
-        : 'SPACE: HIT! (TIME IT HIGH)';
+      msg = game.serveState === 'ready' ? second + t(lang, 'serveToss') : t(lang, 'serveHit');
     } else {
-      msg = `${second}CPU SERVE`;
+      msg = second + t(lang, 'serveCpu');
     }
     this.text(msg, CX, 50, COLORS.title);
   }
@@ -798,40 +883,90 @@ export class Renderer {
   }
 
   private drawTitle(game: Game): void {
-    this.overlay(0.7);
+    this.overlay(0.72);
+    const lang = game.settings.lang;
+    const tt = (k: string, a?: string | number) => t(lang, k, a);
     // 藍字白邊大標題（比照 FC Tennis）
     const c = this.ctx;
-    c.font = '800 22px Verdana, sans-serif';
+    c.font = '800 20px Verdana, sans-serif';
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     c.lineJoin = 'round';
     c.strokeStyle = COLORS.line;
     c.lineWidth = 2.4;
-    c.strokeText('AMAGI TENNIS', CX, 56);
+    c.strokeText('AMAGI TENNIS', CX, 44);
     c.fillStyle = '#6c9bf5';
-    c.fillText('AMAGI TENNIS', CX, 56);
-    this.text('RETRO COURT CLASSIC', CX, 76, '#9fdcb0', '600 8px Verdana, sans-serif');
-    this.text(`LEVEL  ‹ ${game.level} ›`, CX, 106, COLORS.uiText, '600 10px Verdana, sans-serif');
-    this.text(`MATCH: FIRST TO ${game.matchGames} GAMES`, CX, 122, COLORS.uiText, '600 10px Verdana, sans-serif');
-    this.text('LEFT/RIGHT: LEVEL   UP/DOWN: MATCH', CX, 136, COLORS.uiDim);
-    if (this.blink(game)) {
-      this.text('PRESS ENTER TO START', CX, 158, COLORS.title, '700 10px Verdana, sans-serif');
-    }
-    this.text('MOVE: ARROWS/WASD   HIT: SPACE/J   LOB: K', CX, 186, COLORS.uiDim);
-    this.text('SERVE: SPACE TOSS + SPACE HIT', CX, 198, COLORS.uiDim);
-    this.text('FOREHAND = POWER   BACKHAND = ANGLE', CX, 210, COLORS.uiDim);
-    this.text('SMASH HIGH BALLS / WATCH THE NET!', CX, 222, COLORS.uiDim);
-    this.text('F2: MOTION LAB', CX, 232, COLORS.title, '600 6.5px Verdana, sans-serif');
+    c.fillText('AMAGI TENNIS', CX, 44);
+    this.text(tt('subtitle'), CX, 62, '#9fdcb0', '600 8px Verdana, sans-serif');
+
+    if (game.menu === 'main') this.drawMainMenu(game, tt);
+    else if (game.menu === 'settings') this.drawSettingsMenu(game, tt);
+    else this.drawKeyMenu(game, tt);
+  }
+
+  private drawMainMenu(game: Game, tt: (k: string, a?: string | number) => string): void {
+    [tt('start'), tt('settings')].forEach((label, idx) => {
+      const sel = game.menuIndex === idx;
+      const text = sel ? `▶  ${label}  ◀` : label;
+      this.text(text, CX, 110 + idx * 24, sel ? COLORS.title : COLORS.uiText, '700 13px Verdana, sans-serif');
+    });
+    this.text(tt('navMenu'), CX, 200, COLORS.uiDim, '600 8px Verdana, sans-serif');
+  }
+
+  private drawSettingsMenu(game: Game, tt: (k: string, a?: string | number) => string): void {
+    const s = game.settings;
+    const matchVal = s.mode === 'normal' ? tt('bestOf3') : `‹ ${tt('firstTo', s.matchGames)} ›`;
+    const rows: Array<[string, string]> = [
+      [tt('mode'), `‹ ${s.mode === 'normal' ? tt('modeNormal') : tt('modeSimple')} ›`],
+      [tt('difficulty'), `‹ ${s.level} ›`],
+      [tt('match'), matchVal],
+      [tt('sound'), `‹ ${s.muted ? tt('off') : tt('on')} ›`],
+      [tt('language'), `‹ ${tt('langName')} ›`],
+      [tt('keyConfig'), '▸'],
+      [tt('back'), ''],
+    ];
+    rows.forEach(([label, value], idx) => {
+      const sel = game.menuIndex === idx;
+      const y = 88 + idx * 16;
+      const col = sel ? COLORS.title : COLORS.uiText;
+      this.text((sel ? '‣ ' : '') + label, CX - 6, y, col, '600 10px Verdana, sans-serif', 'right');
+      if (value) this.text(value, CX + 10, y, col, '600 9.5px Verdana, sans-serif', 'left');
+    });
+    this.text(tt('navSettings'), CX, 206, COLORS.uiDim, '600 7.5px Verdana, sans-serif');
+  }
+
+  private drawKeyMenu(game: Game, tt: (k: string, a?: string | number) => string): void {
+    const s = game.settings;
+    BIND_ACTIONS.forEach((a, idx) => {
+      const sel = game.menuIndex === idx;
+      const y = 84 + idx * 15;
+      const col = sel ? COLORS.title : COLORS.uiText;
+      const rebinding = sel && game.rebindAction === a;
+      this.text((sel ? '‣ ' : '') + tt('act_' + a), CX - 6, y, col, '600 9px Verdana, sans-serif', 'right');
+      this.text(rebinding ? tt('pressKey') : keyLabel(s.binds[a][0]), CX + 10, y,
+        rebinding ? COLORS.title : col, '600 9px Verdana, sans-serif', 'left');
+    });
+    [tt('resetKeys'), tt('back')].forEach((label, k) => {
+      const idx = BIND_ACTIONS.length + k;
+      const sel = game.menuIndex === idx;
+      this.text((sel ? '‣ ' : '') + label, CX, 84 + idx * 15, sel ? COLORS.title : COLORS.uiText,
+        '600 9px Verdana, sans-serif');
+    });
+    this.text(game.rebindAction ? tt('pressKey') : tt('navKeys'), CX, 212, COLORS.uiDim, '600 7.5px Verdana, sans-serif');
   }
 
   private drawGameOver(game: Game): void {
     this.overlay(0.55);
+    const lang = game.settings.lang;
     const s = game.score;
     this.text('MATCH!', CX, 80, COLORS.title, '700 17px Verdana, sans-serif');
-    this.text(s.winner === 'near' ? 'YOU WIN!' : 'CPU WINS', CX, 108, COLORS.uiText, '700 14px Verdana, sans-serif');
-    this.text(`GAMES  ${s.games.near} - ${s.games.far}`, CX, 132, COLORS.uiDim, '600 10px Verdana, sans-serif');
+    this.text(s.winner === 'near' ? t(lang, 'youWin') : t(lang, 'cpuWins'), CX, 108, COLORS.uiText, '700 14px Verdana, sans-serif');
+    const score = s.mode === 'normal'
+      ? `${t(lang, 'setCol')}  ${s.sets.near} - ${s.sets.far}`
+      : `${t(lang, 'games')}  ${s.games.near} - ${s.games.far}`;
+    this.text(score, CX, 132, COLORS.uiDim, '600 10px Verdana, sans-serif');
     if (this.blink(game)) {
-      this.text('PRESS ENTER', CX, 168, COLORS.title, '700 10px Verdana, sans-serif');
+      this.text(t(lang, 'pressEnter'), CX, 168, COLORS.title, '700 10px Verdana, sans-serif');
     }
   }
 }

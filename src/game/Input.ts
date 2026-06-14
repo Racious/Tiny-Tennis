@@ -1,6 +1,8 @@
 // 鍵盤輸入：held（持續）與 pressed（邊緣觸發、可被消耗）
+import type { Settings } from '../settings';
 import { HitType, type Controller, type Intent } from '../types';
 
+// 預設會 preventDefault 的鍵（避免捲動等瀏覽器預設行為）
 const GAME_KEYS = new Set([
   'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
   'KeyA', 'KeyD', 'KeyW', 'KeyS',
@@ -35,24 +37,36 @@ export class Input {
     return hit;
   }
 
+  /** 捕捉並消耗任一按下的鍵（供按鍵重新綁定）；可排除特定鍵 */
+  consumeAnyPressed(exclude: string[] = []): string | null {
+    for (const code of this.pressed) {
+      if (!exclude.includes(code)) {
+        this.pressed.delete(code);
+        return code;
+      }
+    }
+    return null;
+  }
+
   /** 每個固定更新步結束時呼叫 */
   endFrame(): void {
     this.pressed.clear();
   }
 }
 
-/** 玩家鍵盤控制器：方向 + 擊球意圖（擊球瞬間以方向鍵瞄準落點） */
+/** 玩家鍵盤控制器：方向 + 擊球意圖（按鍵綁定來自設定，可自訂） */
 export class KeyboardController implements Controller {
-  constructor(private input: Input) {}
+  constructor(private input: Input, private settings: Settings) {}
 
   update(): Intent {
     const i = this.input;
-    const left = i.isHeld('ArrowLeft', 'KeyA');
-    const right = i.isHeld('ArrowRight', 'KeyD');
-    const up = i.isHeld('ArrowUp', 'KeyW');
-    const down = i.isHeld('ArrowDown', 'KeyS');
-    const lob = i.consumePressed('KeyK');
-    const hit = i.consumePressed('Space', 'KeyJ') || lob;
+    const b = this.settings.binds;
+    const left = i.isHeld(...b.left);
+    const right = i.isHeld(...b.right);
+    const up = i.isHeld(...b.up);
+    const down = i.isHeld(...b.down);
+    const lob = i.consumePressed(...b.lob);
+    const hit = i.consumePressed(...b.hit) || lob;
 
     return {
       moveX: (right ? 1 : 0) - (left ? 1 : 0),

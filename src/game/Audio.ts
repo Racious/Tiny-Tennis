@@ -20,9 +20,16 @@ const BASS: number[] = [ // 四分音符
 const TUNE_LEN = MELODY.length * EIGHTH;
 
 export class AudioFx {
+  muted = false;
   private ctx: AudioContext | null = null;
   private musicHandle: number | null = null;
   private musicNodes: OscillatorNode[] = [];
+
+  /** 設定靜音：靜音時停掉目前音樂 */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    if (muted) this.stopMusic();
+  }
 
   /** 需在使用者手勢（按鍵）後呼叫一次 */
   unlock(): void {
@@ -40,7 +47,7 @@ export class AudioFx {
     freq: number, dur: number, delay = 0, vol = 0.12,
     type: OscillatorType = 'square', track = false,
   ): void {
-    if (!this.ctx || freq <= 0) return;
+    if (this.muted || !this.ctx || freq <= 0) return;
     const t0 = this.ctx.currentTime + delay;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -73,7 +80,7 @@ export class AudioFx {
 
   // ── 標題音樂 ─────────────────────────────────────
   startTitleMusic(): void {
-    if (!this.ctx || this.musicHandle !== null) return;
+    if (this.muted || !this.ctx || this.musicHandle !== null) return;
     const schedule = () => {
       MELODY.forEach((f, i) => this.tone(f, EIGHTH * 0.92, i * EIGHTH, 0.055, 'square', true));
       BASS.forEach((f, i) => this.tone(f, EIGHTH * 1.8, i * EIGHTH * 2, 0.09, 'triangle', true));

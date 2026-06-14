@@ -19,6 +19,7 @@ import {
   HitType, otherSide, type Controller, type GamePhase, type GameView,
   type Intent, type ServeCourt, type Side, type Vec2,
 } from '../types';
+import { BIND_ACTIONS, type BindAction, type Settings } from '../settings';
 import { clamp, dist, lerp, pick, tri } from '../utils';
 import type { AudioFx } from './Audio';
 import { Input, KeyboardController } from './Input';
@@ -36,8 +37,10 @@ const LABELS: Record<Side, string> = { near: 'P1', far: 'CPU' };
 export class Game {
   phase: GamePhase = 'title';
   time = 0;
-  level = 3;                     // LEVEL 1–5
-  matchGames: number = MATCH_OPTIONS[0];
+  // 主選單
+  menu: 'main' | 'settings' | 'keyconfig' = 'main';
+  menuIndex = 0;
+  rebindAction: BindAction | null = null;
   score: Score;
   ball = new Ball();
   players: Record<Side, Player>;
@@ -59,14 +62,15 @@ export class Game {
   umpireCall: string | null = null; // 裁判即時播報（IN! 等）
   private umpireCallTimer = 0;
 
-  constructor(private input: Input, private audio: AudioFx) {
-    this.score = new Score('near', this.matchGames);
+  constructor(private input: Input, private audio: AudioFx, public settings: Settings) {
+    this.audio.setMuted(settings.muted);
+    this.score = new Score('near', { mode: settings.mode, gamesToWin: settings.matchGames });
     this.players = {
       near: new Player('near', PLAYER_SPEED),
       far: new Player('far', this.aiParams.speed),
     };
     this.controllers = {
-      near: new KeyboardController(input),
+      near: new KeyboardController(input, settings),
       far: new AiController(this.aiParams),
     };
   }
@@ -101,6 +105,8 @@ export class Game {
       case 'gameOver':
         if (this.input.consumePressed('Enter')) {
           this.phase = 'title';
+          this.menu = 'main';
+          this.menuIndex = 0;
           this.audio.startTitleMusic();
         }
         break;
@@ -128,38 +134,88 @@ export class Game {
 
   // ── Title ────────────────────────────────────────
   private updateTitle(): void {
-    let touched = false;
-    if (this.input.consumePressed('ArrowLeft', 'KeyA')) {
-      this.level = Math.max(1, this.level - 1);
-      touched = true;
+    const i = this.input;
+
+    // 重新綁定按鍵：捕捉下一個按下的鍵（Esc 取消）
+    if (this.rebindAction) {
+      if (i.consumePressed('Escape')) { this.rebindAction = null; return; }
+      const code = i.consumeAnyPressed(['Escape', 'Enter']);
+      if (code) {
+        this.settings.binds[this.rebindAction] = [code];
+        this.settings.save();
+        this.rebindAction = null;
+        this.audio.bounce();
+      }
+      return;
     }
-    if (this.input.consumePressed('ArrowRight', 'KeyD')) {
-      this.level = Math.min(AI_LEVELS.length, this.level + 1);
-      touched = true;
-    }
-    if (this.input.consumePressed('ArrowUp', 'ArrowDown', 'KeyW', 'KeyS')) {
-      const i = MATCH_OPTIONS.indexOf(this.matchGames as typeof MATCH_OPTIONS[number]);
-      this.matchGames = MATCH_OPTIONS[(i + 1) % MATCH_OPTIONS.length];
-      touched = true;
-    }
-    if (touched) {
+
+    const up = i.consumePressed('ArrowUp', 'KeyW');
+    const down = i.consumePressed('ArrowDown', 'KeyS');
+    const left = i.consumePressed('ArrowLeft', 'KeyA');
+    const right = i.consumePressed('ArrowRight', 'KeyD');
+    const enter = i.consumePressed('Enter');
+    const esc = i.consumePressed('Escape');
+    if (up || down || left || right || enter || esc) {
       this.audio.unlock();
       this.audio.startTitleMusic();
-      this.audio.bounce();
     }
-    if (this.input.consumePressed('Enter')) {
-      this.audio.unlock();
-      this.audio.stopMusic();
-      this.audio.game();
-      this.startMatch();
+
+    const count = this.menuCount();
+    if (up) { this.menuIndex = (this.menuIndex - 1 + count) % count; this.audio.bounce(); }
+    if (down) { this.menuIndex = (this.menuIndex + 1) % count; this.audio.bounce(); }
+
+    if (this.menu === 'main') {
+      if (enter) {
+        if (this.menuIndex === 0) { this.audio.stopMusic(); this.audio.game(); this.startMatch(); }
+        else { this.menu = 'settings'; this.menuIndex = 0; this.audio.bounce(); }
+      }
+    } else if (this.menu === 'settings') {
+      const dir = (right ? 1 : 0) - (left ? 1 : 0);
+      if (this.menuIndex <= 4 && (dir !== 0 || enter)) this.adjustSetting(this.menuIndex, dir || 1);
+      if (enter && this.menuIndex === 5) { this.menu = 'keyconfig'; this.menuIndex = 0; this.audio.bounce(); }
+      if ((enter && this.menuIndex === 6) || esc) { this.menu = 'main'; this.menuIndex = 1; this.audio.bounce(); }
+    } else { // keyconfig
+      if (enter) {
+        if (this.menuIndex < BIND_ACTIONS.length) this.rebindAction = BIND_ACTIONS[this.menuIndex];
+        else if (this.menuIndex === BIND_ACTIONS.length) { this.settings.resetBinds(); this.audio.bounce(); }
+        else { this.menu = 'settings'; this.menuIndex = 4; this.audio.bounce(); }
+      }
+      if (esc) { this.menu = 'settings'; this.menuIndex = 4; this.audio.bounce(); }
     }
   }
 
+  menuCount(): number {
+    if (this.menu === 'main') return 2;
+    if (this.menu === 'settings') return 7;
+    return BIND_ACTIONS.length + 2; // 各動作 + 重設 + 返回
+  }
+
+  private adjustSetting(index: number, dir: number): void {
+    const s = this.settings;
+    if (index === 0) {
+      s.mode = s.mode === 'simple' ? 'normal' : 'simple';
+    } else if (index === 1) {
+      s.level = clamp(s.level + (dir >= 0 ? 1 : -1), 1, AI_LEVELS.length);
+    } else if (index === 2) {
+      if (s.mode === 'simple') {
+        const k = MATCH_OPTIONS.indexOf(s.matchGames as typeof MATCH_OPTIONS[number]);
+        s.matchGames = MATCH_OPTIONS[(k + 1) % MATCH_OPTIONS.length];
+      }
+    } else if (index === 3) {
+      s.muted = !s.muted;
+      this.audio.setMuted(s.muted);
+    } else if (index === 4) {
+      s.lang = s.lang === 'en' ? 'zh' : 'en';
+    }
+    s.save();
+    this.audio.bounce();
+  }
+
   private startMatch(): void {
-    this.aiParams = AI_LEVELS[this.level - 1];
+    this.aiParams = AI_LEVELS[this.settings.level - 1];
     this.players.far = new Player('far', this.aiParams.speed);
     this.controllers.far = new AiController(this.aiParams);
-    this.score = new Score('near', this.matchGames);
+    this.score = new Score('near', { mode: this.settings.mode, gamesToWin: this.settings.matchGames });
     this.faults = 0;
     this.banners = [];
     this.setupServe();
@@ -482,8 +538,11 @@ export class Game {
     this.umpireCall = null; // 點數結束清除即時播報，改由橫幅/對話框呈現
     const ev = this.score.pointWon(winner);
     const queue: BannerItem[] = [{ text, time: 1.1, sound: text === 'NET!' ? 'net' : 'point' }];
-    if (ev.gameWon && !ev.matchWon) {
+    if (ev.gameWon && !ev.setWon && !ev.matchWon) {
       queue.push({ text: `GAME ${LABELS[ev.gameWon]}`, time: 1.4, sound: 'game' });
+    }
+    if (ev.setWon && !ev.matchWon) {
+      queue.push({ text: `SET ${LABELS[ev.setWon]}`, time: 1.5, sound: 'game' });
     }
     if (ev.matchWon) {
       queue.push({ text: 'MATCH!', time: 1.6, sound: 'match' });

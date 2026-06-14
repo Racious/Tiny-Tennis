@@ -4,6 +4,7 @@ import { AudioFx } from './game/Audio';
 import { Game } from './game/Game';
 import { Input } from './game/Input';
 import { Renderer } from './game/Renderer';
+import { Settings } from './settings';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game');
 if (!canvas) throw new Error('找不到 #game canvas');
@@ -18,7 +19,8 @@ ctx.imageSmoothingEnabled = true;
 
 const input = new Input();
 const audio = new AudioFx();
-const game = new Game(input, audio);
+const settings = new Settings();
+const game = new Game(input, audio, settings);
 const renderer = new Renderer(ctx);
 
 // 除錯掛勾（供開發檢視狀態，正式發布可移除）
